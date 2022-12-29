@@ -1,0 +1,1 @@
+Rust library for trading through XTB's API
