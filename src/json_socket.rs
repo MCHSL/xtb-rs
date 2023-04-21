@@ -18,6 +18,7 @@ static RUSTLS_CLIENT_CONFIG: Lazy<Arc<ClientConfig>> = Lazy::new(|| {
 });
 
 pub struct JsonSocket {
+    host: String,
     stream: BufReader<StreamOwned<ClientSession, std::net::TcpStream>>,
 }
 
@@ -30,6 +31,7 @@ impl JsonSocket {
         let stream = rustls::StreamOwned::new(client, socket);
 
         Ok(Self {
+            host: host.to_string(),
             stream: BufReader::new(stream),
         })
     }
@@ -48,6 +50,9 @@ impl JsonSocket {
                 // Discard the second newline
                 std::io::copy(&mut self.stream.by_ref().take(1), &mut std::io::sink());
                 return Ok(buffer);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                return Err(ErrorKind::WouldBlock)
             }
             Err(e) => return Err(ErrorKind::Disconnected(e)),
         }
@@ -74,16 +79,25 @@ impl JsonSocket {
         let message = self.receive_one_message()?;
         //println!("{}", message);
 
-        serde_json::from_str(&message).map_err(|e| ErrorKind::JsonError(e))
+        serde_json::from_str(&message).map_err(ErrorKind::JsonError)
     }
 
     pub fn send<S: Serialize>(&mut self, message: &S) -> Result<()> {
         let msg = serde_json::to_string(message).map_err(|e| ErrorKind::JsonError(e))?;
+        //println!("{}", msg);
         self.send_string(&msg)
     }
 
     pub fn send_recv<S: Serialize, D: DeserializeOwned>(&mut self, message: &S) -> Result<D> {
         self.send(message)?;
         self.recv()
+    }
+
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> Result<()> {
+        self.stream
+            .get_mut()
+            .sock
+            .set_nonblocking(nonblocking)
+            .map_err(|e| ErrorKind::Disconnected(e))
     }
 }
